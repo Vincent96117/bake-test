@@ -2,57 +2,95 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>HUNTER PRO | 10日量化回測系統</title>
+    <title>HUNTER PRO | 10日量化回測系統 V2</title>
     <style>
         body { background: #000; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 20px; font-size: 13px; }
         .win { background: #064e3b !important; } .loss { background: #7f1d1d !important; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { border: 1px solid #333; padding: 10px; text-align: center; }
         th { background: #1c1c1c; color: #f2a900; }
-        .btn-run { background: #f2a900; color: #000; padding: 10px 25px; cursor: pointer; border: none; font-weight: bold; border-radius: 4px; }
+        .btn-run { background: #f2a900; color: #000; padding: 12px 30px; cursor: pointer; border: none; font-weight: bold; border-radius: 4px; font-size: 16px; }
+        .high-text { color: #58a6ff; font-weight: bold; } /* 最高漲幅用藍色標示 */
     </style>
 </head>
 <body>
-    <h1>🎯 12H 量化回測 (08:00 評分 → 20:00 漲跌)</h1>
-    <div id="status">準備就緒，請點擊按鈕開始。</div><br>
-    <button class="btn-run" onclick="startBacktest()">🚀 執行 10 日回測</button>
+    <h1>🎯 12H 量化回測 (含期間最高漲幅)</h1>
+    <div id="status">準備就緒，點擊按鈕開始分析過去 10 天數據。</div><br>
+    <button class="btn-run" onclick="startBacktest()">🚀 執行 10 日深度回測</button>
+    
     <table id="bt-table">
         <thead>
-            <tr><th>日期</th><th>幣種</th><th>08:00 評分</th><th>08:00 價格</th><th>20:00 價格</th><th>12H 漲跌幅</th></tr>
+            <tr>
+                <th>日期</th>
+                <th>幣種</th>
+                <th>08:00 評分</th>
+                <th>08:00 價格</th>
+                <th>期間最高點</th>
+                <th>20:00 收盤</th>
+                <th style="color:#58a6ff">期間最高 %</th>
+                <th>12H 最終跌幅</th>
+            </tr>
         </thead>
         <tbody id="bt-body"></tbody>
     </table>
+
 <script>
     async function startBacktest() {
         const status = document.getElementById('status');
         const body = document.getElementById('bt-body');
         body.innerHTML = ''; status.innerText = "正在取得熱門幣種...";
+        
         const tRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
         const tData = await tRes.json();
         const topSymbols = tData.filter(d => d.symbol.endsWith('USDT')).sort((a, b) => b.quoteVolume - a.quoteVolume).slice(0, 40).map(d => d.symbol);
+
         for (let i = 1; i <= 10; i++) {
             let d = new Date(); d.setDate(d.getDate() - i);
-            status.innerText = `正在分析 ${d.toLocaleDateString()} ...`;
+            status.innerText = `正在分析 ${d.toLocaleDateString()} 的 K 線數據...`;
+            
             for (let s of topSymbols) {
                 try {
                     let start = new Date(d.setHours(8, 0, 0, 0)).getTime();
+                    // 抓取 12 根 1小時K線
                     let res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${s}&interval=1h&startTime=${start}&limit=13`);
                     let k = await res.json();
+                    
                     if (k.length >= 12) {
-                        let open = parseFloat(k[0][1]), close = parseFloat(k[12][4]), vol = parseFloat(k[0][7]);
+                        let open08 = parseFloat(k[0][1]);
+                        let close20 = parseFloat(k[12][4]);
+                        let vol08 = parseFloat(k[0][7]);
+                        
+                        // 計算 08:00 到 20:00 之間的最高價
+                        let highArray = k.slice(0, 13).map(item => parseFloat(item[2]));
+                        let maxHigh = Math.max(...highArray);
+                        
                         let range = ((parseFloat(k[0][2]) - parseFloat(k[0][3])) / parseFloat(k[0][3])) * 100;
-                        let score = (vol > 8000000) ? Math.min(100, Math.round(range * 6 + 35)) : 0;
+                        let score = (vol08 > 8000000) ? Math.min(100, Math.round(range * 6 + 35)) : 0;
+                        
                         if (score >= 45) {
-                            let diff = ((close - open) / open * 100).toFixed(2);
-                            let rowClass = diff >= 3 ? 'win' : (diff <= -3 ? 'loss' : '');
-                            body.insertAdjacentHTML('beforeend', `<tr class="${rowClass}"><td>${d.toLocaleDateString()}</td><td>${s.replace('USDT','')}</td><td>${score}</td><td>${open}</td><td>${close}</td><td>${diff}%</td></tr>`);
+                            let maxDiff = ((maxHigh - open08) / open08 * 100).toFixed(2);
+                            let finalDiff = ((close20 - open08) / open08 * 100).toFixed(2);
+                            let rowClass = finalDiff >= 3 ? 'win' : (finalDiff <= -3 ? 'loss' : '');
+                            
+                            body.insertAdjacentHTML('beforeend', `
+                                <tr class="${rowClass}">
+                                    <td>${d.toLocaleDateString()}</td>
+                                    <td>${s.replace('USDT','')}</td>
+                                    <td>${score}</td>
+                                    <td>${open08.toFixed(4)}</td>
+                                    <td>${maxHigh.toFixed(4)}</td>
+                                    <td>${close20.toFixed(4)}</td>
+                                    <td class="high-text">${maxDiff}%</td>
+                                    <td>${finalDiff}%</td>
+                                </tr>
+                            `);
                         }
                     }
                 } catch(e){}
             }
             await new Promise(r => setTimeout(r, 300));
         }
-        status.innerText = "✅ 回測完成！";
+        status.innerText = "✅ 回測完成！你可以對比「最高漲幅」與「最終漲幅」來判斷賣點。";
     }
 </script>
 </body>
